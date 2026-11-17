@@ -37,7 +37,7 @@ The UI is compiled by Vite into static JavaScript. Vite replaces `VITE_API_BASE`
 
 ## Secrets
 
-Compose requires `DB_PASSWORD` and `SECRET_KEY` to be set in the local `.env` file and has no password fallback. They are passed to the running API and database containers as environment variables; they are not Docker build arguments. The Docker ignore file excludes local `.env` files from the build context.
+Compose requires `DB_PASSWORD` and `SECRET_KEY` to be set in the local `.env` file and has no password fallback. They are passed to the running API and database containers as environment variables; they are not Docker build arguments. The Docker ignore files exclude local `.env` files from both build contexts.
 
 ## Diagnostics and persistence evidence
 
@@ -79,11 +79,11 @@ Largest layer notes: add the layer inspection result after running `docker histo
 
 Each repository's workflow runs its existing CI checks before building the container. Pull requests build but do not publish. A push to `main` publishes `main` and a short `sha-<commit>` tag; a `v*` Git tag publishes semantic version tags.
 
-After the first successful publish, set each GitHub Container Registry package visibility to **Public** in the package settings so unauthenticated pulls work. Example release commands:
+After the first successful publish, set each GitHub Container Registry package visibility to **Public** in the package settings so unauthenticated pulls work. To publish matching `1.0.0` tags from both repositories:
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.0 && git push origin v1.0.0
+git -C ../wishlist-ui tag v1.0.0 && git -C ../wishlist-ui push origin v1.0.0
 docker pull ghcr.io/sarccasm/wishlist-api:1.0.0
 docker pull ghcr.io/sarccasm/wishlist-ui:1.0.0
 ```
