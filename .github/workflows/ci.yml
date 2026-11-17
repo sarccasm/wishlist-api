@@ -171,19 +171,11 @@ jobs:
           } > fault-injection-evidence.txt
 
           "${compose[@]}" up -d postgres redis api
-          for attempt in $(seq 1 30); do
-            db_id="$("${compose[@]}" ps -aq postgres)"
-            api_id="$("${compose[@]}" ps -aq api)"
-            if [ -n "$db_id" ] && [ -n "$api_id" ]; then
-              db_health="$(docker inspect --format '{{.State.Health.Status}}' "$db_id")"
-              api_state="$(docker inspect --format '{{.State.Status}}' "$api_id")"
-              api_health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$api_id")"
-              if [ "$db_health" = "healthy" ] && { [ "$api_state" != "running" ] || [ "$api_health" != "healthy" ]; }; then
-                break
-              fi
-            fi
-            sleep 5
-          done
+          db_id="$("${compose[@]}" ps -q postgres)"
+          api_id="$("${compose[@]}" ps -q api)"
+          db_health="$(docker inspect --format '{{.State.Health.Status}}' "$db_id")"
+          api_state="$(docker inspect --format '{{.State.Status}}' "$api_id")"
+          api_health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$api_id")"
 
           {
             echo
@@ -201,17 +193,28 @@ jobs:
             echo "## Database logs"
             "${compose[@]}" logs --no-color --tail=30 postgres
             echo
-            echo "## Diagnosis"
-            echo "The database is healthy, but the API cannot connect because DB_HOST resolves to its own container. Step 2 (docker compose config) exposes the wrong host; step 3 (docker compose logs api) shows the connection failure. Use the Compose service name postgres."
+            echo "## Diagnostic command"
+            echo 'docker compose exec -T api python -c "import os, psycopg2; psycopg2.connect(host=os.environ[\\"DB_HOST\\"], port=5432, dbname=os.environ[\\"DB_NAME\\"], user=os.environ[\\"DB_USER\\"], password=os.environ[\\"DB_PASSWORD\\"], connect_timeout=3)"'
           } >> fault-injection-evidence.txt
 
           grep -Fq "DB_HOST: 127.0.0.1" fault-injection-evidence.txt
           test "$db_health" = "healthy"
-          if [ "$api_state" = "running" ] && [ "$api_health" = "healthy" ]; then
-            echo "The injected API fault did not prevent readiness." >&2
+          if [ "$api_state" != "running" ]; then
+            echo "API container did not stay running." >&2
             exit 1
           fi
-          "${compose[@]}" logs --no-color --tail=100 api | grep -Eqi "127\\.0\\.0\\.1|connection refused|could not connect|OperationalError|psycopg2"
+          if "${compose[@]}" exec -T api python -c 'import os, psycopg2; psycopg2.connect(host=os.environ["DB_HOST"], port=5432, dbname=os.environ["DB_NAME"], user=os.environ["DB_USER"], password=os.environ["DB_PASSWORD"], connect_timeout=3)' >> fault-injection-evidence.txt 2>&1; then
+            echo "The injected fault unexpectedly allowed a database connection." >> fault-injection-evidence.txt
+            exit 1
+          else
+            echo "Expected result: API container cannot connect to PostgreSQL at 127.0.0.1:5432." >> fault-injection-evidence.txt
+          fi
+          grep -Eqi "connection refused|could not connect" fault-injection-evidence.txt
+          {
+            echo
+            echo "## Diagnosis"
+            echo "PostgreSQL is healthy, but DB_HOST=127.0.0.1 points back to the API container. The command above fails with connection refused. In the checklist, docker compose config (step 2) reveals the bad hostname; docker compose exec (or docker compose logs api, step 3) proves the API cannot reach PostgreSQL. The correct hostname is the Compose service name postgres."
+          } >> fault-injection-evidence.txt
           cat fault-injection-evidence.txt
 
       - name: Upload fault-injection evidence
