@@ -200,7 +200,7 @@ jobs:
           grep -Fq "DB_HOST: 127.0.0.1" fault-injection-evidence.txt
           test "$db_health" = "healthy"
           test "$api_health" != "healthy"
-          grep -Eqi "127\.0\.0\.1|connection refused|could not connect" fault-injection-evidence.txt
+          grep -A100 "## API logs" fault-injection-evidence.txt | grep -Eqi "127\\.0\\.0\\.1|connection refused|could not connect"
           cat fault-injection-evidence.txt
 
       - name: Upload fault-injection evidence
