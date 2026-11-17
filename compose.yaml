@@ -29,7 +29,7 @@ services:
 
   api:
     build:
-      context: ./wishlist-api
+      context: .
       dockerfile: Dockerfile
     environment:
       DB_USER: ${DB_USER:?Set DB_USER in .env}
@@ -59,7 +59,7 @@ services:
 
   ui:
     build:
-      context: ./wishlist-ui
+      context: ../wishlist-ui
       dockerfile: Dockerfile
       args:
         VITE_API_BASE: ${VITE_API_BASE:-http://localhost:8000}
