@@ -54,6 +54,23 @@ docker compose up -d
 
 To show that the database volume survives a restart, create a wishlist through the UI/API, run `docker compose down` and `docker compose up -d`, then confirm the same record is still present. `docker compose down -v` removes the volume and its data.
 
+## Troubleshooting checklist
+
+Use this order when a service is running but another service cannot reach it:
+
+1. `docker compose ps` — check whether the service is running or healthy.
+2. `docker compose config` — inspect the final port mappings and interpolated settings.
+3. `docker compose logs --tail=100 <service>` — read the failing service's startup or connection error.
+4. Check the address from the caller's point of view: containers use Compose service names such as `postgres` and `api`; a browser uses published host addresses such as `localhost`.
+
+| Injected fault | Expected clue | Where to find it |
+| --- | --- | --- |
+| Set API `DB_HOST=127.0.0.1` in Compose | API tries to connect to itself and fails before startup; the database is healthy | `docker compose logs api`; Compose API environment in `docker compose config` |
+| Change the published UI port from `8080` to `8081` | UI is healthy, but opening `localhost:8080` fails | `docker compose ps` shows the host-to-container port; `docker compose config` shows the mapping |
+| Set `VITE_API_BASE=http://api:8000` | UI loads, but browser requests fail because the host browser cannot resolve the Compose-only service name | Browser developer console and the `VITE_API_BASE` build argument in `docker compose config` |
+
+During the team fault-diagnosis exercise, record the fault that was actually injected, the command used to identify it, and the relevant output or screenshot here. Do not report a hypothetical fault as an observed result.
+
 ## Image size measurements
 
 Record the sizes from the same Docker installation after building both stages. Do not compare the builder stage to a compressed registry download:
