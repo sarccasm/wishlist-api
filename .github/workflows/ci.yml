@@ -2,7 +2,7 @@ name: API CI
 
 on:
   push:
-    branches: [main, lab-04-api-ci, lab-05-containers]
+    branches: [main, lab-04-api-ci, lab-05-containers, lab-05-fault-diagnostic]
     tags: ["v*"]
   pull_request:
     branches: [main]
@@ -130,6 +130,87 @@ jobs:
             image_tag="${GITHUB_REF_NAME#v}"
           fi
           docker pull "$IMAGE:$image_tag"
+
+  diagnostic-fault-injection:
+    if: github.ref == 'refs/heads/lab-05-fault-diagnostic'
+    needs: lint-and-test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Inject wrong database hostname and record diagnosis
+        run: |
+          set -euo pipefail
+          cat > .env <<'ENV'
+          DB_USER=wishlist
+          DB_PASSWORD=ci-only-password
+          DB_NAME=wishlist
+          SECRET_KEY=ci-only-secret
+          ALGORITHM=HS256
+          ENV
+          cat > compose.fault.yaml <<'YAML'
+          services:
+            api:
+              environment:
+                DB_HOST: 127.0.0.1
+          YAML
+          compose=(docker compose -f compose.yaml -f compose.fault.yaml)
+          cleanup() {
+            "${compose[@]}" down -v || true
+          }
+          trap cleanup EXIT
+
+          {
+            echo "# Lab 05 controlled fault-injection evidence"
+            echo
+            echo "Injected fault: API DB_HOST=127.0.0.1, which points back to the API container."
+            echo
+            echo "## Effective configuration"
+            "${compose[@]}" config
+          } > fault-injection-evidence.txt
+
+          "${compose[@]}" up -d postgres redis api
+          for attempt in $(seq 1 30); do
+            db_id="$("${compose[@]}" ps -q postgres)"
+            api_id="$("${compose[@]}" ps -q api)"
+            db_health="$(docker inspect --format '{{.State.Health.Status}}' "$db_id")"
+            api_health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$api_id")"
+            if [ "$db_health" = "healthy" ] && [ "$api_health" != "healthy" ]; then
+              break
+            fi
+            sleep 5
+          done
+
+          {
+            echo
+            echo "## Service status"
+            "${compose[@]}" ps -a
+            echo
+            echo "## API logs"
+            "${compose[@]}" logs --no-color --tail=100 api
+            echo
+            echo "## Database logs"
+            "${compose[@]}" logs --no-color --tail=30 postgres
+            echo
+            echo "## Diagnosis"
+            echo "The database is healthy, but the API cannot connect because DB_HOST resolves to its own container. Step 2 (docker compose config) exposes the wrong host; step 3 (docker compose logs api) shows the connection failure. Use the Compose service name postgres."
+          } >> fault-injection-evidence.txt
+
+          grep -Fq "DB_HOST: 127.0.0.1" fault-injection-evidence.txt
+          test "$db_health" = "healthy"
+          test "$api_health" != "healthy"
+          grep -Eqi "127\.0\.0\.1|connection refused|could not connect" fault-injection-evidence.txt
+          cat fault-injection-evidence.txt
+
+      - name: Upload fault-injection evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab05-fault-injection-diagnosis
+          path: fault-injection-evidence.txt
+          if-no-files-found: error
+          retention-days: 30
 
   compose-smoke-test:
     needs: lint-and-test
