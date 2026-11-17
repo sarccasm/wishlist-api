@@ -2,7 +2,7 @@ name: API CI
 
 on:
   push:
-    branches: [main, lab-04-api-ci, lab-05-containers]
+    branches: [main, lab-04-api-ci, lab-05-containers, lab-05-fault-diagnostic]
     tags: ["v*"]
   pull_request:
     branches: [main]
@@ -130,6 +130,101 @@ jobs:
             image_tag="${GITHUB_REF_NAME#v}"
           fi
           docker pull "$IMAGE:$image_tag"
+
+  diagnostic-fault-injection:
+    if: github.ref == 'refs/heads/lab-05-fault-diagnostic'
+    needs: lint-and-test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Inject wrong database hostname and record diagnosis
+        run: |
+          set -euo pipefail
+          cat > .env <<'ENV'
+          DB_USER=wishlist
+          DB_PASSWORD=ci-only-password
+          DB_NAME=wishlist
+          SECRET_KEY=ci-only-secret
+          ALGORITHM=HS256
+          ENV
+          cat > compose.fault.yaml <<'YAML'
+          services:
+            api:
+              environment:
+                DB_HOST: 127.0.0.1
+          YAML
+          compose=(docker compose -f compose.yaml -f compose.fault.yaml)
+          cleanup() {
+            "${compose[@]}" down -v || true
+          }
+          trap cleanup EXIT
+
+          {
+            echo "# Lab 05 controlled fault-injection evidence"
+            echo
+            echo "Injected fault: API DB_HOST=127.0.0.1, which points back to the API container."
+            echo
+            echo "## Effective configuration"
+            "${compose[@]}" config
+          } > fault-injection-evidence.txt
+
+          "${compose[@]}" up -d postgres redis api
+          db_id="$("${compose[@]}" ps -q postgres)"
+          api_id="$("${compose[@]}" ps -q api)"
+          db_health="$(docker inspect --format '{{.State.Health.Status}}' "$db_id")"
+          api_state="$(docker inspect --format '{{.State.Status}}' "$api_id")"
+          api_health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$api_id")"
+
+          {
+            echo
+            echo "## Service status"
+            "${compose[@]}" ps -a
+            echo
+            echo "## Container state"
+            echo "PostgreSQL health: $db_health"
+            echo "API state: $api_state"
+            echo "API health: $api_health"
+            echo
+            echo "## API logs"
+            "${compose[@]}" logs --no-color --tail=100 api
+            echo
+            echo "## Database logs"
+            "${compose[@]}" logs --no-color --tail=30 postgres
+            echo
+            echo "## Diagnostic command"
+            echo 'docker compose exec -T api python -c "import os, psycopg2; psycopg2.connect(host=os.environ[\\"DB_HOST\\"], port=5432, dbname=os.environ[\\"DB_NAME\\"], user=os.environ[\\"DB_USER\\"], password=os.environ[\\"DB_PASSWORD\\"], connect_timeout=3)"'
+          } >> fault-injection-evidence.txt
+
+          grep -Fq "DB_HOST: 127.0.0.1" fault-injection-evidence.txt
+          test "$db_health" = "healthy"
+          if [ "$api_state" != "running" ]; then
+            echo "API container did not stay running." >&2
+            exit 1
+          fi
+          if "${compose[@]}" exec -T api python -c 'import os, psycopg2; psycopg2.connect(host=os.environ["DB_HOST"], port=5432, dbname=os.environ["DB_NAME"], user=os.environ["DB_USER"], password=os.environ["DB_PASSWORD"], connect_timeout=3)' >> fault-injection-evidence.txt 2>&1; then
+            echo "The injected fault unexpectedly allowed a database connection." >> fault-injection-evidence.txt
+            exit 1
+          else
+            echo "Expected result: API container cannot connect to PostgreSQL at 127.0.0.1:5432." >> fault-injection-evidence.txt
+          fi
+          grep -Eqi "connection refused|could not connect" fault-injection-evidence.txt
+          {
+            echo
+            echo "## Diagnosis"
+            echo "PostgreSQL is healthy, but DB_HOST=127.0.0.1 points back to the API container. The command above fails with connection refused. In the checklist, docker compose config (step 2) reveals the bad hostname; docker compose exec (or docker compose logs api, step 3) proves the API cannot reach PostgreSQL. The correct hostname is the Compose service name postgres."
+          } >> fault-injection-evidence.txt
+          cat fault-injection-evidence.txt
+
+      - name: Upload fault-injection evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab05-fault-injection-diagnosis
+          path: fault-injection-evidence.txt
+          if-no-files-found: error
+          retention-days: 30
 
   compose-smoke-test:
     needs: lint-and-test
