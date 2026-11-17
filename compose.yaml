@@ -39,6 +39,7 @@ services:
       DB_SSLMODE: disable
       REDIS_URL: redis://redis:6379
       SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      ALGORITHM: ${ALGORITHM:-HS256}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:8080}
     ports:
       - "${API_PORT:-8000}:8000"
