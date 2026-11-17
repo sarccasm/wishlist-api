@@ -116,3 +116,79 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  compose-smoke-test:
+    needs: lint-and-test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out API
+        uses: actions/checkout@v4
+        with:
+          path: wishlist-api
+
+      - name: Check out UI
+        uses: actions/checkout@v4
+        with:
+          repository: sarccasm/wishlist-ui
+          ref: lab-05-containers
+          path: wishlist-ui
+
+      - name: Start stack, exercise API, verify persistence, and record image sizes
+        run: |
+          set -euo pipefail
+          cat > wishlist-api/.env <<'ENV'
+          DB_USER=wishlist
+          DB_PASSWORD=ci-only-password
+          DB_NAME=wishlist
+          SECRET_KEY=ci-only-secret
+          API_PORT=8000
+          UI_PORT=8080
+          VITE_API_BASE=http://localhost:8000
+          ALLOWED_ORIGINS=http://localhost:8080
+          ENV
+          compose=(docker compose --project-directory wishlist-api -f wishlist-api/compose.yaml)
+          trap '"${compose[@]}" down -v || true' EXIT
+          "${compose[@]}" up --build -d
+          for url in http://localhost:8000/health http://localhost:8080/ http://localhost:8080/wishlists; do
+            curl --retry 30 --retry-delay 2 --retry-connrefused --fail --silent --show-error "$url" --output /dev/null
+          done
+          curl --fail --silent --show-error -X POST http://localhost:8000/register \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"lab5-smoke@example.com","full_name":"Lab 5 Smoke Test","password":"ci-only-password"}'
+          token="$(curl --fail --silent --show-error -X POST http://localhost:8000/token \
+            -H 'Content-Type: application/x-www-form-urlencoded' \
+            -d 'username=lab5-smoke%40example.com&password=ci-only-password' \
+            | python -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+          curl --fail --silent --show-error -X POST http://localhost:8000/wishlists \
+            -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+            -d '{"title":"Lab 5 persistence check","description":"Created by CI"}'
+          "${compose[@]}" down
+          "${compose[@]}" up -d
+          curl --retry 30 --retry-delay 2 --retry-connrefused --fail --silent --show-error http://localhost:8000/wishlists \
+            | python -c 'import json,sys; rows=json.load(sys.stdin); assert any(row["title"] == "Lab 5 persistence check" for row in rows), "record missing after restart"'
+          docker build --target builder -t wishlist-api:builder wishlist-api
+          docker build -t wishlist-api:local wishlist-api
+          docker build --target build -t wishlist-ui:build wishlist-ui
+          docker build -t wishlist-ui:local wishlist-ui
+          {
+            echo "Image sizes (bytes):"
+            for image in wishlist-api:builder wishlist-api:local wishlist-ui:build wishlist-ui:local; do
+              docker image inspect "$image" --format '{{.RepoTags}} {{.Size}} bytes'
+            done
+            echo
+            echo "API final image layers:"
+            docker history wishlist-api:local
+            echo
+            echo "UI final image layers:"
+            docker history wishlist-ui:local
+          } > lab05-container-evidence.txt
+          cat lab05-container-evidence.txt
+
+      - name: Upload container measurement evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab05-container-evidence
+          path: lab05-container-evidence.txt
+          if-no-files-found: ignore
+          retention-days: 30
