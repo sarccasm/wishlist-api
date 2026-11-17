@@ -52,7 +52,7 @@ docker compose down
 docker compose up -d
 ```
 
-The API workflow's Compose smoke check registers a user, creates a wishlist through the API, stops and restarts the stack without removing the volume, and confirms the wishlist is still returned. The check also requests the UI at `/` and `/wishlists` to confirm the nginx history fallback. The [successful run #28](https://github.com/sarccasm/wishlist-api/actions/runs/44070664186) includes this evidence and an image-measurement artifact.
+The API workflow's Compose smoke check registers a user, creates a wishlist through the API, stops and restarts the stack without removing the volume, and confirms the wishlist is still returned. The check also requests the UI at `/` and `/wishlists` to confirm the nginx history fallback. The [successful run #28](https://github.com/sarccasm/wishlist-api/actions/runs/44074110848) includes this evidence and an image-measurement artifact.
 
 To repeat the persistence check manually, create a wishlist through the UI/API, run `docker compose down` and `docker compose up -d`, then confirm the same record is still present. `docker compose down -v` removes the volume and its data.
 
@@ -73,11 +73,11 @@ Use this order when a service is running but another service cannot reach it:
 
 The first CI smoke run exposed two real API configuration errors. The API health request returned HTTP 500; `docker compose logs api` showed Redis rejecting the obsolete `ssl_cert_reqs` option for a `redis://` URL, so that option was removed. After the API became healthy, login returned HTTP 500 because `ALGORITHM` was unset; Compose and `.env.example` now set it to `HS256`. Both fixes are included in the later successful run linked above.
 
-For the separate team fault-injection exercise, record the fault that a teammate actually injects, the command used to identify it, and the relevant output or screenshot here. Do not report a hypothetical fault as an observed result.
+The [controlled CI fault-injection run](https://github.com/sarccasm/wishlist-api/actions/runs/44076156085) overrides the API database hostname with `127.0.0.1`. Its artifact records `docker compose config`, healthy PostgreSQL status, API container status, and the actual `psycopg2.OperationalError: connection refused` output from inside the API container. Diagnosis: `127.0.0.1` points to the API container itself; use the Compose service hostname `postgres`. This is a real automated reproduction, not a claim that a human teammate performed the exercise. If the instructor specifically requires two people, a partner still needs to repeat it and provide their screenshot.
 
 ## Image size measurements
 
-These sizes were measured with `docker image inspect` on the Ubuntu 24.04 GitHub runner in [CI run #28](https://github.com/sarccasm/wishlist-api/actions/runs/44070664186). MiB values are bytes divided by 1,048,576; local sizes can vary with platform and base-image updates. The run's `lab05-container-evidence` artifact includes raw byte counts and `docker history` output.
+These sizes were measured with `docker image inspect` on the Ubuntu 24.04 GitHub runner in [CI run #28](https://github.com/sarccasm/wishlist-api/actions/runs/44074110848). MiB values are bytes divided by 1,048,576; local sizes can vary with platform and base-image updates. The run's `lab05-container-evidence` artifact includes raw byte counts and `docker history` output.
 
 | Image | Size |
 | --- | ---: |
@@ -92,11 +92,14 @@ The largest non-base API final layer is the installed Python dependencies at 78.
 
 Each repository's workflow runs its existing CI checks before building the container. Pull requests build but do not publish. A push to `main` publishes `main` and a short `sha-<commit>` tag; a `v*` Git tag publishes semantic version tags.
 
-After the first successful publish, set each GitHub Container Registry package visibility to **Public** in the package settings so unauthenticated pulls work. To publish matching `1.0.0` tags from both repositories:
+Both packages are now public, and both repositories have a `v1.0.0` release. Their workflows log out of GHCR after publishing, then pull the image without credentials. The API check passed in [run #36](https://github.com/sarccasm/wishlist-api/actions/runs/44074110848); the UI check passed in [run #11](https://github.com/sarccasm/wishlist-ui/actions/runs/44073968417).
+
+- [API package](https://github.com/users/sarccasm/packages/container/wishlist-api) and [API release v1.0.0](https://github.com/sarccasm/wishlist-api/releases/tag/v1.0.0)
+- [UI package](https://github.com/users/sarccasm/packages/container/wishlist-ui) and [UI release v1.0.0](https://github.com/sarccasm/wishlist-ui/releases/tag/v1.0.0)
+
+To repeat the anonymous pulls:
 
 ```bash
-git tag v1.0.0 && git push origin v1.0.0
-git -C ../wishlist-ui tag v1.0.0 && git -C ../wishlist-ui push origin v1.0.0
 docker pull ghcr.io/sarccasm/wishlist-api:1.0.0
 docker pull ghcr.io/sarccasm/wishlist-ui:1.0.0
 ```
