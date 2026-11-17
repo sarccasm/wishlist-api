@@ -94,8 +94,8 @@ Each repository's workflow runs its existing CI checks before building the conta
 
 Both packages are now public, and both repositories have a `v1.0.0` release. Their workflows log out of GHCR after publishing, then pull the image without credentials. The API check passed in [run #36](https://github.com/sarccasm/wishlist-api/actions/runs/44074110848); the UI check passed in [run #11](https://github.com/sarccasm/wishlist-ui/actions/runs/44073968417).
 
-- [API package](https://github.com/users/sarccasm/packages/container/wishlist-api) and [API release v1.0.0](https://github.com/sarccasm/wishlist-api/releases/tag/v1.0.0)
-- [UI package](https://github.com/users/sarccasm/packages/container/wishlist-ui) and [UI release v1.0.0](https://github.com/sarccasm/wishlist-ui/releases/tag/v1.0.0)
+- [API package](https://github.com/sarccasm/wishlist-api/pkgs/container/wishlist-api) and [API release v1.0.0](https://github.com/sarccasm/wishlist-api/releases/tag/v1.0.0)
+- [UI package](https://github.com/sarccasm/wishlist-ui/pkgs/container/wishlist-ui) and [UI release v1.0.0](https://github.com/sarccasm/wishlist-ui/releases/tag/v1.0.0)
 
 To repeat the anonymous pulls:
 
