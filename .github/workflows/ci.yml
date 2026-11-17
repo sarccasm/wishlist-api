@@ -172,12 +172,15 @@ jobs:
 
           "${compose[@]}" up -d postgres redis api
           for attempt in $(seq 1 30); do
-            db_id="$("${compose[@]}" ps -q postgres)"
-            api_id="$("${compose[@]}" ps -q api)"
-            db_health="$(docker inspect --format '{{.State.Health.Status}}' "$db_id")"
-            api_health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$api_id")"
-            if [ "$db_health" = "healthy" ] && [ "$api_health" != "healthy" ]; then
-              break
+            db_id="$("${compose[@]}" ps -aq postgres)"
+            api_id="$("${compose[@]}" ps -aq api)"
+            if [ -n "$db_id" ] && [ -n "$api_id" ]; then
+              db_health="$(docker inspect --format '{{.State.Health.Status}}' "$db_id")"
+              api_state="$(docker inspect --format '{{.State.Status}}' "$api_id")"
+              api_health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$api_id")"
+              if [ "$db_health" = "healthy" ] && { [ "$api_state" != "running" ] || [ "$api_health" != "healthy" ]; }; then
+                break
+              fi
             fi
             sleep 5
           done
@@ -186,6 +189,11 @@ jobs:
             echo
             echo "## Service status"
             "${compose[@]}" ps -a
+            echo
+            echo "## Container state"
+            echo "PostgreSQL health: $db_health"
+            echo "API state: $api_state"
+            echo "API health: $api_health"
             echo
             echo "## API logs"
             "${compose[@]}" logs --no-color --tail=100 api
@@ -199,8 +207,11 @@ jobs:
 
           grep -Fq "DB_HOST: 127.0.0.1" fault-injection-evidence.txt
           test "$db_health" = "healthy"
-          test "$api_health" != "healthy"
-          grep -A100 "## API logs" fault-injection-evidence.txt | grep -Eqi "127\\.0\\.0\\.1|connection refused|could not connect"
+          if [ "$api_state" = "running" ] && [ "$api_health" = "healthy" ]; then
+            echo "The injected API fault did not prevent readiness." >&2
+            exit 1
+          fi
+          "${compose[@]}" logs --no-color --tail=100 api | grep -Eqi "127\\.0\\.0\\.1|connection refused|could not connect|OperationalError|psycopg2"
           cat fault-injection-evidence.txt
 
       - name: Upload fault-injection evidence
