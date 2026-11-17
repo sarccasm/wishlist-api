@@ -9,7 +9,6 @@ env/
 
 # Secrets and local configuration
 .env*
-!.env.example
 
 # Tests and coverage
 tests/
