@@ -37,7 +37,7 @@ The UI is compiled by Vite into static JavaScript. Vite replaces `VITE_API_BASE`
 
 ## Secrets
 
-Compose requires `DB_PASSWORD` and `SECRET_KEY` to be set in the local `.env` file and has no password fallback. They are passed to the running API and database containers as environment variables; they are not Docker build arguments. The Docker ignore files exclude local `.env` files from both build contexts.
+Compose requires `DB_PASSWORD` and `SECRET_KEY` to be set in the local `.env` file and has no password fallback. They are passed to the running API and database containers as environment variables; they are not Docker build arguments. The Docker ignore files exclude local `.env` files from both build contexts. The signing algorithm is set to `HS256` in the environment example.
 
 ## Diagnostics and persistence evidence
 
@@ -52,7 +52,9 @@ docker compose down
 docker compose up -d
 ```
 
-To show that the database volume survives a restart, create a wishlist through the UI/API, run `docker compose down` and `docker compose up -d`, then confirm the same record is still present. `docker compose down -v` removes the volume and its data.
+The API workflow's Compose smoke check registers a user, creates a wishlist through the API, stops and restarts the stack without removing the volume, and confirms the wishlist is still returned. The check also requests the UI at `/` and `/wishlists` to confirm the nginx history fallback. The [successful run #28](https://github.com/sarccasm/wishlist-api/actions/runs/44070664186) includes this evidence and an image-measurement artifact.
+
+To repeat the persistence check manually, create a wishlist through the UI/API, run `docker compose down` and `docker compose up -d`, then confirm the same record is still present. `docker compose down -v` removes the volume and its data.
 
 ## Troubleshooting checklist
 
@@ -69,28 +71,22 @@ Use this order when a service is running but another service cannot reach it:
 | Change the published UI port from `8080` to `8081` | UI is healthy, but opening `localhost:8080` fails | `docker compose ps` shows the host-to-container port; `docker compose config` shows the mapping |
 | Set `VITE_API_BASE=http://api:8000` | UI loads, but browser requests fail because the host browser cannot resolve the Compose-only service name | Browser developer console and the `VITE_API_BASE` build argument in `docker compose config` |
 
-During the team fault-diagnosis exercise, record the fault that was actually injected, the command used to identify it, and the relevant output or screenshot here. Do not report a hypothetical fault as an observed result.
+The first CI smoke run exposed two real API configuration errors. The API health request returned HTTP 500; `docker compose logs api` showed Redis rejecting the obsolete `ssl_cert_reqs` option for a `redis://` URL, so that option was removed. After the API became healthy, login returned HTTP 500 because `ALGORITHM` was unset; Compose and `.env.example` now set it to `HS256`. Both fixes are included in the later successful run linked above.
+
+For the separate team fault-injection exercise, record the fault that a teammate actually injects, the command used to identify it, and the relevant output or screenshot here. Do not report a hypothetical fault as an observed result.
 
 ## Image size measurements
 
-Record the sizes from the same Docker installation after building both stages. Do not compare the builder stage to a compressed registry download:
-
-```bash
-docker build --target builder -t wishlist-api:build .
-docker build -t wishlist-api:local .
-docker build --target build -t wishlist-ui:build ../wishlist-ui
-docker build -t wishlist-ui:local ../wishlist-ui
-docker image ls --format 'table {{.Repository}}:{{.Tag}}\t{{.Size}}' | grep -E 'wishlist-(api|ui)'
-```
+These sizes were measured with `docker image inspect` on the Ubuntu 24.04 GitHub runner in [CI run #28](https://github.com/sarccasm/wishlist-api/actions/runs/44070664186). MiB values are bytes divided by 1,048,576; local sizes can vary with platform and base-image updates. The run's `lab05-container-evidence` artifact includes raw byte counts and `docker history` output.
 
 | Image | Size |
-| --- | --- |
-| API builder stage (`wishlist-api:build`) | Measure locally |
-| API final stage (`wishlist-api:local`) | Measure locally |
-| UI build stage (`wishlist-ui:build`) | Measure locally |
-| UI final stage (`wishlist-ui:local`) | Measure locally |
+| --- | ---: |
+| API builder stage (`wishlist-api:builder`) | 210.9 MiB |
+| API final stage (`wishlist-api:local`) | 194.2 MiB |
+| UI build stage (`wishlist-ui:build`) | 310.6 MiB |
+| UI final stage (`wishlist-ui:local`) | 46.1 MiB |
 
-Largest layer notes: add the layer inspection result after running `docker history wishlist-api:local` and `docker history wishlist-ui:local`.
+The largest non-base API final layer is the installed Python dependencies at 78.5 MB; the Debian base contributes layers of 78.9 MB and 42.4 MB. The UI build stage keeps Node and `node_modules` while building; the final UI image drops those and contains only nginx plus about 160 KB of `dist/`.
 
 ## GHCR releases
 
