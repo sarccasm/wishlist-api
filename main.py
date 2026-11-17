@@ -52,10 +52,7 @@ app.add_middleware(
 )
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-redis_client = redis.from_url(REDIS_URL, decode_responses=True, ssl_cert_reqs="none")
-# ssl_cert_reqs="none" - Disable SSL certificate verification for Upstash
-
-
+redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
 # redis_client = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
 
@@ -269,7 +266,6 @@ async def get_item_status_history(
     redis_client.setex(f"item_statuses_{item_id}", 120, json.dumps(serialized_statuses))
 
     return serialized_statuses
-
 
 
 @app.get("/health")

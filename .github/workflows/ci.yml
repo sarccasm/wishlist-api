@@ -2,9 +2,14 @@ name: API CI
 
 on:
   push:
-    branches: [main, lab-04-api-ci]
+    branches: [main, lab-04-api-ci, lab-05-containers]
+    tags: ["v*"]
   pull_request:
     branches: [main]
+
+permissions:
+  contents: read
+
 jobs:
   lint-and-test:
     runs-on: ubuntu-24.04
@@ -44,6 +49,7 @@ jobs:
       REDIS_PORT: 6379
       REDIS_URL: redis://localhost:6379
       SECRET_KEY: ci-test-secret-not-for-production
+      ALGORITHM: HS256
       FRONTEND_URL: http://localhost:5173
       BACKEND_URL: http://localhost:8000
 
@@ -68,3 +74,132 @@ jobs:
 
       - name: Run tests
         run: python -m pytest -v
+
+  build-and-publish-image:
+    needs: lint-and-test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  compose-smoke-test:
+    needs: lint-and-test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out API
+        uses: actions/checkout@v4
+        with:
+          path: wishlist-api
+
+      - name: Check out UI
+        uses: actions/checkout@v4
+        with:
+          repository: sarccasm/wishlist-ui
+          ref: lab-05-containers
+          path: wishlist-ui
+
+      - name: Start stack, exercise API, verify persistence, and record image sizes
+        run: |
+          set -euo pipefail
+          cat > wishlist-api/.env <<'ENV'
+          DB_USER=wishlist
+          DB_PASSWORD=ci-only-password
+          DB_NAME=wishlist
+          SECRET_KEY=ci-only-secret
+          ALGORITHM=HS256
+          API_PORT=8000
+          UI_PORT=8080
+          VITE_API_BASE=http://localhost:8000
+          ALLOWED_ORIGINS=http://localhost:8080
+          ENV
+          compose=(docker compose --project-directory wishlist-api -f wishlist-api/compose.yaml)
+          cleanup() {
+            result=$?
+            if [ "$result" -ne 0 ]; then
+              "${compose[@]}" ps -a || true
+              "${compose[@]}" logs --no-color api postgres redis ui || true
+            fi
+            "${compose[@]}" down -v || true
+            exit "$result"
+          }
+          trap cleanup EXIT
+          "${compose[@]}" up --build -d --wait --wait-timeout 120
+          for url in http://localhost:8000/health http://localhost:8080/ http://localhost:8080/wishlists; do
+            curl --retry 30 --retry-delay 2 --retry-connrefused --fail --silent --show-error "$url" --output /dev/null
+          done
+          curl --fail --silent --show-error -X POST http://localhost:8000/register \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"lab5-smoke@example.com","full_name":"Lab 5 Smoke Test","password":"ci-only-password"}'
+          token="$(curl --fail --silent --show-error -X POST http://localhost:8000/token \
+            -H 'Content-Type: application/x-www-form-urlencoded' \
+            -d 'username=lab5-smoke%40example.com&password=ci-only-password' \
+            | python -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+          curl --fail --silent --show-error -X POST http://localhost:8000/wishlists \
+            -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+            -d '{"title":"Lab 5 persistence check","description":"Created by CI"}'
+          "${compose[@]}" down
+          "${compose[@]}" up -d --wait --wait-timeout 120
+          curl --retry 30 --retry-delay 2 --retry-connrefused --fail --silent --show-error http://localhost:8000/wishlists \
+            | python -c 'import json,sys; rows=json.load(sys.stdin); assert any(row["title"] == "Lab 5 persistence check" for row in rows), "record missing after restart"'
+          docker build --target builder -t wishlist-api:builder wishlist-api
+          docker build -t wishlist-api:local wishlist-api
+          docker build --target build -t wishlist-ui:build wishlist-ui
+          docker build -t wishlist-ui:local wishlist-ui
+          {
+            echo "Image sizes (bytes):"
+            for image in wishlist-api:builder wishlist-api:local wishlist-ui:build wishlist-ui:local; do
+              docker image inspect "$image" --format '{{.RepoTags}} {{.Size}} bytes'
+            done
+            echo
+            echo "API final image layers:"
+            docker history wishlist-api:local
+            echo
+            echo "UI final image layers:"
+            docker history wishlist-ui:local
+          } > lab05-container-evidence.txt
+          cat lab05-container-evidence.txt
+
+      - name: Upload container measurement evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab05-container-evidence
+          path: lab05-container-evidence.txt
+          if-no-files-found: ignore
+          retention-days: 30
