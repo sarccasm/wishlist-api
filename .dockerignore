@@ -1,24 +1,23 @@
-# Python cache
+# Python cache and virtual environments
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
 *.db
-
-# Virtual environments
-.env
-.venv
+.venv/
 venv/
 ENV/
 env/
 
-# Alembic cache
-alembic/*.pyc
-alembic/__pycache__/
-alembic/versions/__pycache__/
+# Secrets and local configuration
+.env*
+!.env.example
 
-# Logs
-*.log
+# Tests and coverage
+tests/
+.coverage
+.pytest_cache/
+htmlcov/
+coverage.xml
+.tox/
 
 # Build / distribution
 dist/
@@ -26,24 +25,15 @@ build/
 *.egg-info/
 .eggs/
 
-# Tests / Coverage
-.coverage
-.pytest_cache/
-htmlcov/
-coverage.xml
-.tox/
-
 # Type checker
 .mypy_cache/
 .dmypy.json
 dmypy.json
 
-# Git / VCS
+# Git / editor / OS files
 .git/
 .gitignore
 .gitattributes
-
-# IDE / Editor
 .vscode/
 .idea/
 *.swp
@@ -51,15 +41,8 @@ dmypy.json
 *.iml
 .DS_Store
 
-# Documentation
+# Documentation and CI
 *.md
 docs/
-README.md
-
-# CI/CD
 .github/
 .gitlab-ci.yml
-
-# Other
-*.sqlite
-*.sqlite3
