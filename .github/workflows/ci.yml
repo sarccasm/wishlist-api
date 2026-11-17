@@ -159,7 +159,7 @@ jobs:
             exit "$result"
           }
           trap cleanup EXIT
-          "${compose[@]}" up --build -d
+          "${compose[@]}" up --build -d --wait --wait-timeout 120
           for url in http://localhost:8000/health http://localhost:8080/ http://localhost:8080/wishlists; do
             curl --retry 30 --retry-delay 2 --retry-connrefused --fail --silent --show-error "$url" --output /dev/null
           done
@@ -174,7 +174,7 @@ jobs:
             -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
             -d '{"title":"Lab 5 persistence check","description":"Created by CI"}'
           "${compose[@]}" down
-          "${compose[@]}" up -d
+          "${compose[@]}" up -d --wait --wait-timeout 120
           curl --retry 30 --retry-delay 2 --retry-connrefused --fail --silent --show-error http://localhost:8000/wishlists \
             | python -c 'import json,sys; rows=json.load(sys.stdin); assert any(row["title"] == "Lab 5 persistence check" for row in rows), "record missing after restart"'
           docker build --target builder -t wishlist-api:builder wishlist-api
