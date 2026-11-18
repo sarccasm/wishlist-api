@@ -1,0 +1,58 @@
+name: Roll back production images
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_image:
+        description: "Prior API image, e.g. ghcr.io/sarccasm/wishlist-api:sha-1234567"
+        required: true
+        type: string
+      ui_image:
+        description: "Prior UI image tag or digest, e.g. ghcr.io/sarccasm/wishlist-ui@sha256:..."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  rollback:
+    name: Deploy prior images without changing the database schema
+    runs-on: ubuntu-24.04
+    environment: production
+    env:
+      API_IMAGE: ${{ inputs.api_image }}
+      UI_IMAGE: ${{ inputs.ui_image }}
+      API_DEPLOY_HOOK: ${{ secrets.API_DEPLOY_HOOK }}
+      UI_DEPLOY_HOOK: ${{ secrets.UI_DEPLOY_HOOK }}
+      API_BASE_URL: ${{ vars.API_BASE_URL }}
+      UI_BASE_URL: ${{ vars.UI_BASE_URL }}
+    steps:
+      - name: Validate image references
+        run: |
+          set -euo pipefail
+          [[ "$API_IMAGE" == ghcr.io/sarccasm/wishlist-api:sha-* ]]
+          [[ "$UI_IMAGE" == ghcr.io/sarccasm/wishlist-ui:sha-* || "$UI_IMAGE" == ghcr.io/sarccasm/wishlist-ui@sha256:* ]]
+
+      - name: Trigger Render rollback deploys without running migrations
+        run: |
+          set -euo pipefail
+          test -n "$API_DEPLOY_HOOK" && test -n "$UI_DEPLOY_HOOK"
+          curl --fail --silent --show-error --get "$API_DEPLOY_HOOK" --data-urlencode "imgURL=$API_IMAGE"
+          curl --fail --silent --show-error --get "$UI_DEPLOY_HOOK" --data-urlencode "imgURL=$UI_IMAGE"
+
+      - name: Verify rolled-back services
+        run: |
+          set -euo pipefail
+          test -n "$API_BASE_URL" && test -n "$UI_BASE_URL"
+          healthy=0
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error --connect-timeout 5 "$API_BASE_URL/health" >/dev/null; then
+              healthy=1
+              break
+            fi
+            sleep 10
+          done
+          test "$healthy" -eq 1
+          curl --fail --silent --show-error "$UI_BASE_URL/wishlists/1" >/dev/null
+          echo "Rollback verification passed. Database schema was left unchanged."
