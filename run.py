@@ -2,37 +2,31 @@
 
 import os
 import sys
-import subprocess
+
 import uvicorn
 
 
-def check_dependencies():
+def check_dependencies() -> bool:
     try:
-        import fastapi
-        import redis
-        import sqlalchemy
-        print("✅ All dependencies installed")
-        return True
-    except ImportError as e:
-        print(f"❌ Dependencies not present: {e}")
-        print("Please install dependencies: pip install -r requirements.txt")
+        import fastapi  # noqa: F401
+        import redis  # noqa: F401
+        import sqlalchemy  # noqa: F401
+    except ImportError as exc:
+        print(f"Dependencies are missing: {exc}", file=sys.stderr)
         return False
+    return True
 
 
-def main():
+def main() -> None:
     if not check_dependencies():
         sys.exit(1)
-
-    print("🚀 Start Wish List API...")
-    print("📖 Docs available on: http://localhost:8000/docs")
-    print("🔄 API endpoints on: http://localhost:8000")
 
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
+        port=int(os.getenv("PORT", "8000")),
+        workers=int(os.getenv("WEB_CONCURRENCY", "1")),
+        log_level="info",
     )
 
 

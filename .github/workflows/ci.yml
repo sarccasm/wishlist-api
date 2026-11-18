@@ -72,6 +72,31 @@ jobs:
       - name: Check code with Ruff
         run: ruff check . --select E4,E7,E9,F63,F7,F82
 
+      - name: Build a fresh database schema from migrations
+        run: |
+          alembic upgrade head
+          python - <<'PY'
+          import os
+          import psycopg2
+
+          connection = psycopg2.connect(
+              host=os.environ["DB_HOST"], port=5432,
+              dbname=os.environ["DB_NAME"], user=os.environ["DB_USER"],
+              password=os.environ["DB_PASSWORD"],
+          )
+          with connection, connection.cursor() as cursor:
+              cursor.execute(
+                  "SELECT tablename FROM pg_tables "
+                  "WHERE schemaname = 'public' AND tablename <> 'alembic_version' "
+                  "ORDER BY tablename"
+              )
+              tables = [row[0] for row in cursor.fetchall()]
+              expected = {"users", "wishlists", "wish_items", "wish_item_statuses"}
+              assert expected.issubset(tables), f"Missing tables: {expected - set(tables)}"
+              print("Tables after alembic upgrade head:", ", ".join(tables))
+          connection.close()
+          PY
+
       - name: Run tests
         run: python -m pytest -v
 
