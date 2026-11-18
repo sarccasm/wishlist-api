@@ -72,7 +72,10 @@ Add these environment variables to both:
 - UI_BASE_URL: public UI origin for smoke checks.
 
 For production, configure Required reviewers with another teammate and enable Prevent
-self-review. Workflow YAML cannot configure this repository-level protection setting.
+self-review. Set the production environment variable PRODUCTION_APPROVAL_READY=true only
+after those protection rules are saved. Until then the production job is skipped, so a
+staging success cannot deploy to an unprotected production environment. Workflow YAML
+cannot configure the reviewer or Prevent self-review setting.
 Application credentials stay in Render; migration URLs and deploy hooks are GitHub
 environment secrets. Never print or commit these values.
 

@@ -90,7 +90,7 @@ jobs:
   deploy-production:
     name: Await approval, migrate, and deploy production
     needs: [resolve-images, deploy-staging]
-    if: needs.deploy-staging.result == 'success'
+    if: needs.deploy-staging.result == 'success' && vars.PRODUCTION_APPROVAL_READY == 'true'
     runs-on: ubuntu-24.04
     environment: production
     env:
