@@ -73,15 +73,26 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$API_BASE_URL" && test -n "$UI_BASE_URL"
-          healthy=0
+          api_healthy=0
           for attempt in $(seq 1 60); do
-            if curl --fail --silent --show-error --connect-timeout 5 "$API_BASE_URL/health" >/dev/null; then
-              healthy=1
+            if curl --fail --silent --connect-timeout 5 "$API_BASE_URL/health" >/dev/null; then
+              api_healthy=1
               break
             fi
             sleep 10
           done
-          test "$healthy" -eq 1
+          test "$api_healthy" -eq 1
+
+          ui_ready=0
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --connect-timeout 5 "$UI_BASE_URL/wishlists/1" >/dev/null; then
+              ui_ready=1
+              break
+            fi
+            sleep 10
+          done
+          test "$ui_ready" -eq 1
+
           curl --fail --silent --show-error "$UI_BASE_URL/" >/dev/null
           curl --fail --silent --show-error "$UI_BASE_URL/wishlists/1" >/dev/null
           curl --fail --silent --show-error "$API_BASE_URL/wishlists" >/dev/null
@@ -120,15 +131,26 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$API_BASE_URL" && test -n "$UI_BASE_URL"
-          healthy=0
+          api_healthy=0
           for attempt in $(seq 1 60); do
-            if curl --fail --silent --show-error --connect-timeout 5 "$API_BASE_URL/health" >/dev/null; then
-              healthy=1
+            if curl --fail --silent --connect-timeout 5 "$API_BASE_URL/health" >/dev/null; then
+              api_healthy=1
               break
             fi
             sleep 10
           done
-          test "$healthy" -eq 1
+          test "$api_healthy" -eq 1
+
+          ui_ready=0
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --connect-timeout 5 "$UI_BASE_URL/wishlists/1" >/dev/null; then
+              ui_ready=1
+              break
+            fi
+            sleep 10
+          done
+          test "$ui_ready" -eq 1
+
           curl --fail --silent --show-error "$UI_BASE_URL/" >/dev/null
           curl --fail --silent --show-error "$UI_BASE_URL/wishlists/1" >/dev/null
           curl --fail --silent --show-error "$API_BASE_URL/wishlists" >/dev/null
