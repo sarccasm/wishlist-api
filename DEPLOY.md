@@ -179,3 +179,12 @@ SELECT 'wish_item_statuses', count(*), max(created_at) FROM wish_item_statuses;
 Add the actual staging/prod URLs, Neon connection limits, restore duration, row counts,
 and screenshots of the staging approval and production rollback after resources are
 provisioned. These values cannot be inferred from public repositories.
+
+## Observed staging evidence — 2026-11-18
+
+- Deployment workflow run [#3](https://github.com/sarccasm/wishlist-api/actions/runs/44338789227) completed successfully at commit `ca099c855a6be25fa921fb2d73db9ffd8b783898`. The image resolution and staging migration/deployment jobs passed; the production job was skipped because `PRODUCTION_APPROVAL_READY` is not enabled.
+- Direct staging check: `GET https://wishlist-api-staging.onrender.com/health` returned HTTP 200 with `{"status":"healthy","redis":"healthy"}` at 2026-11-18T15:49:15Z.
+- The staging UI home route loaded and displayed the WishList application. The workflow's smoke check also passed the API `/wishlists` route, UI `/`, and UI history route `/wishlists/1`.
+- The bare API root `/` is not an application route and returns `{"detail":"Not Found"}`; use `/health`, `/docs`, or documented API endpoints for checks.
+
+The Redis-outage test, production backup/restore comparison, actual Neon connection limit, and production approval/deploy/rollback evidence are still pending. Do not enter estimated values as observed results. Record the commands, timings, counts, and Neon plan limit after those checks are performed.
