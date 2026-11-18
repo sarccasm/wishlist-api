@@ -336,3 +336,79 @@ jobs:
           path: lab05-container-evidence.txt
           if-no-files-found: ignore
           retention-days: 30
+
+  redis-unavailable-smoke-test:
+    name: Verify API resilience without Redis
+    needs: lint-and-test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out API
+        uses: actions/checkout@v4
+        with:
+          path: wishlist-api
+
+      - name: Check out UI build context
+        uses: actions/checkout@v4
+        with:
+          repository: sarccasm/wishlist-ui
+          ref: lab-05-containers
+          path: wishlist-ui
+
+      - name: Stop Redis and verify the API stays healthy
+        run: |
+          set -euo pipefail
+          cat > wishlist-api/.env <<'ENV'
+          DB_USER=wishlist
+          DB_PASSWORD=ci-only-password
+          DB_NAME=wishlist
+          SECRET_KEY=ci-only-secret
+          ALGORITHM=HS256
+          API_PORT=8000
+          ENV
+          compose=(docker compose --project-directory wishlist-api -f wishlist-api/compose.yaml)
+          cleanup() {
+            result=$?
+            if [ "$result" -ne 0 ]; then
+              "${compose[@]}" ps -a || true
+              "${compose[@]}" logs --no-color api postgres redis || true
+            fi
+            "${compose[@]}" down -v || true
+            exit "$result"
+          }
+          trap cleanup EXIT
+          "${compose[@]}" up --build -d --wait --wait-timeout 120 postgres redis api
+          "${compose[@]}" stop redis
+
+          health_json="$(curl --retry 15 --retry-delay 2 --retry-connrefused --fail --silent --show-error http://localhost:8000/health)"
+          printf '%s' "$health_json" | python -c 'import json,sys; r=json.load(sys.stdin); assert r["status"] == "healthy"; assert r["redis"] == "degraded"; print("API health: healthy; Redis: degraded")'
+          wishlist_status="$(curl --retry 15 --retry-delay 2 --retry-connrefused --silent --output /dev/null --write-out '%{http_code}' http://localhost:8000/wishlists)"
+          test "$wishlist_status" = "200"
+
+          api_id="$("${compose[@]}" ps -q api)"
+          sleep 12
+          api_health="$(docker inspect --format '{{.State.Health.Status}}' "$api_id")"
+          restart_count="$(docker inspect --format '{{.RestartCount}}' "$api_id")"
+          test "$api_health" = "healthy"
+          test "$restart_count" = "0"
+
+          {
+            echo "# Redis outage smoke evidence"
+            echo "Redis container was stopped after the API became healthy."
+            echo "Health response: $health_json"
+            echo "GET /wishlists HTTP status: $wishlist_status"
+            echo "API container health after 12 seconds: $api_health"
+            echo "API container restart count: $restart_count"
+            echo
+            echo "## API logs"
+            "${compose[@]}" logs --no-color --tail=50 api
+          } > redis-outage-evidence.txt
+          cat redis-outage-evidence.txt
+
+      - name: Upload Redis outage evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab06-redis-outage-smoke
+          path: redis-outage-evidence.txt
+          if-no-files-found: ignore
+          retention-days: 30
