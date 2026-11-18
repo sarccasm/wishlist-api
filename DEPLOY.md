@@ -157,6 +157,10 @@ from PostgreSQL, and the Render service stays healthy. Restore the real Upstash 
 confirm Redis becomes healthy. Capture the response and service history; do not paste
 the real URL into the report.
 
+The automated Compose fault-injection check is separate from this PaaS check. It stops
+Redis, then verifies the API reports Redis as degraded while health and `/wishlists` stay
+available and the API container does not restart.
+
 ### Backup and restore
 
 Record Neon's PostgreSQL server major version and use a matching or newer postgres
@@ -184,9 +188,9 @@ UNION ALL
 SELECT 'wish_item_statuses', count(*), max(created_at) FROM wish_item_statuses;
 ```
 
-Add the actual staging/prod URLs, Neon connection limits, restore duration, row counts,
-and screenshots of the staging approval and production rollback after resources are
-provisioned. These values cannot be inferred from public repositories.
+Record production service URLs after those services are provisioned, plus restore duration,
+row counts, and screenshots of the production approval and rollback. Do not estimate
+operational results.
 
 ## Observed staging evidence — 2026-11-18
 
@@ -194,5 +198,8 @@ provisioned. These values cannot be inferred from public repositories.
 - Direct staging check: `GET https://wishlist-api-staging.onrender.com/health` returned HTTP 200 with `{"status":"healthy","redis":"healthy"}` at 2026-11-18T15:49:15Z.
 - The staging UI home route loaded and displayed the WishList application. The workflow's smoke check also passed the API `/wishlists` route, UI `/`, and UI history route `/wishlists/1`.
 - The bare API root `/` is not an application route and returns `{"detail":"Not Found"}`; use `/health`, `/docs`, or documented API endpoints for checks.
+- Render workspace inspection confirmed the deployed staging API URL is `https://wishlist-api-staging.onrender.com`. The workspace currently lists the staging API and UI services; production API/UI services are not provisioned there yet.
+- The GitHub Actions run [#62](https://github.com/sarccasm/wishlist-api/actions/runs/44346112255) passed the automated Redis-unavailable Compose check: `/health` stayed healthy with Redis degraded, `/wishlists` returned 200, and the API had zero restarts during the observation window. This verifies the container behavior, not the Render staging outage procedure.
+- A staging Render password-change attempt was restored; the subsequent health check showed Redis healthy, so a successful PaaS Redis-outage observation was not captured.
 
-The Redis-outage test, production backup/restore comparison, actual Neon connection limit, and production approval/deploy/rollback evidence are still pending. Do not enter estimated values as observed results. Record the commands, timings, counts, and Neon plan limit after those checks are performed.
+Still pending: the Render staging Redis-outage observation, production service provisioning and deployment, production approval/deploy/rollback evidence, and the production backup/restore comparison with measured durations and row counts. Do not enter estimated values as observed results.
