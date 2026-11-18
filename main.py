@@ -7,11 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import List
-import redis
 import json
 
-from database import get_db, engine
-from models import Base, User, WishList, WishItem, WishItemStatus
+from database import get_db
+from cache import cache
+from models import User, WishList, WishItem, WishItemStatus
 from schemas import (
     UserCreate, UserResponse, Token, WishListCreate, WishListResponse,
     WishItemCreate, WishItemResponse, WishItemStatusResponse
@@ -22,8 +22,6 @@ from crud import (
     get_wishlist_by_id, add_wish_item, get_wish_items, mark_item_status,
     get_item_statuses
 )
-
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Wish List API", version="1.0.0")
 
@@ -51,15 +49,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-redis_client = redis.from_url(REDIS_URL, decode_responses=True)
-
-# redis_client = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
-
-# docker run -d \
-#   --name redis \
-#   -p 6379:6379 \
-#   redis:7-alpine
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
@@ -104,20 +93,20 @@ async def create_new_wishlist(
 ):
     new_wishlist = create_wishlist(db=db, wishlist=wishlist, user_id=current_user.id)
 
-    redis_client.delete("all_wishlists")
+    cache.delete("all_wishlists")
 
     return new_wishlist
 
 
 @app.get("/wishlists", response_model=List[WishListResponse])
 async def get_all_wishlists(db: Session = Depends(get_db)):
-    cached_wishlists = redis_client.get("all_wishlists")
+    cached_wishlists = cache.get("all_wishlists")
     if cached_wishlists:
         return json.loads(cached_wishlists)
 
     wishlists = get_wishlists(db)
 
-    redis_client.setex("all_wishlists", 300, json.dumps(
+    cache.setex("all_wishlists", 300, json.dumps(
         [wishlist.to_dict() for wishlist in wishlists]
     ))
 
@@ -129,11 +118,11 @@ async def get_my_wishlists(
         db: Session = Depends(get_db),
         current_user: User = Depends(get_current_user)
 ):
-    cached = redis_client.get(f"user_{current_user.id}_wishlists")
+    cached = cache.get(f"user_{current_user.id}_wishlists")
     if cached:
         return json.loads(cached)
     wishlists = db.query(WishList).filter(WishList.user_id == current_user.id).all()
-    redis_client.setex(f"user_{current_user.id}_wishlists", 300,
+    cache.setex(f"user_{current_user.id}_wishlists", 300,
                        json.dumps([wishlist.to_dict() for wishlist in wishlists]))
 
     return wishlists
@@ -163,8 +152,8 @@ async def add_item_to_wishlist(
 
     new_item = add_wish_item(db=db, item=item, wishlist_id=wishlist_id)
 
-    redis_client.delete(f"wishlist_items_{wishlist_id}")
-    redis_client.delete("all_wishlists")
+    cache.delete(f"wishlist_items_{wishlist_id}")
+    cache.delete("all_wishlists")
 
     return new_item
 
@@ -193,21 +182,21 @@ async def delete_item_from_wishlist(
     db.delete(item)
     db.commit()
 
-    redis_client.delete(f"wishlist_items_{wishlist_id}")
-    redis_client.delete("all_wishlists")
+    cache.delete(f"wishlist_items_{wishlist_id}")
+    cache.delete("all_wishlists")
 
     return item
 
 
 @app.get("/wishlists/{wishlist_id}/items", response_model=List[WishItemResponse])
 async def get_wishlist_items(wishlist_id: int, db: Session = Depends(get_db)):
-    cached_items = redis_client.get(f"wishlist_items_{wishlist_id}")
+    cached_items = cache.get(f"wishlist_items_{wishlist_id}")
     if cached_items:
         return json.loads(cached_items)
 
     items = get_wish_items(db, wishlist_id)
 
-    redis_client.setex(f"wishlist_items_{wishlist_id}", 180, json.dumps(
+    cache.setex(f"wishlist_items_{wishlist_id}", 180, json.dumps(
         [item.to_dict() for item in items]
     ))
 
@@ -236,8 +225,8 @@ async def mark_item(
         user_id=current_user.id
     )
 
-    redis_client.delete(f"wishlist_items_{wishlist_id}")
-    redis_client.delete(f"item_statuses_{item_id}")
+    cache.delete(f"wishlist_items_{wishlist_id}")
+    cache.delete(f"item_statuses_{item_id}")
 
     return {"message": "Item status updated", "marked": status_record.marked}
 
@@ -256,32 +245,25 @@ async def get_item_status_history(
     if wishlist.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
 
-    cached_statuses = redis_client.get(f"item_statuses_{item_id}")
+    cached_statuses = cache.get(f"item_statuses_{item_id}")
     if cached_statuses:
         return json.loads(cached_statuses)
 
     statuses = get_item_statuses(db, item_id)
     serialized_statuses = [status.to_dict() for status in statuses]
 
-    redis_client.setex(f"item_statuses_{item_id}", 120, json.dumps(serialized_statuses))
+    cache.setex(f"item_statuses_{item_id}", 120, json.dumps(serialized_statuses))
 
     return serialized_statuses
 
 
 @app.get("/health")
 async def health_check():
-    try:
-        redis_client.ping()
-        redis_status = "healthy"
-    except redis.RedisError:
-        redis_status = "unhealthy"
-
     return {
         "status": "healthy",
-        "redis": redis_status,
+        "redis": "healthy" if cache.ping() else "degraded",
         "timestamp": datetime.utcnow()
     }
-
 
 if __name__ == "__main__":
     import uvicorn

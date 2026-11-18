@@ -12,7 +12,7 @@ client = TestClient(app)
 
 
 def test_health():
-    with patch("main.redis_client.ping", return_value=True):
+    with patch("main.cache.ping", return_value=True):
         response = client.get("/health")
 
     assert response.status_code == 200
@@ -25,3 +25,11 @@ def test_postgres_connection():
         result = connection.execute(text("SELECT 1")).scalar()
 
     assert result == 1
+
+def test_health_when_redis_is_unavailable():
+    with patch("main.cache.ping", return_value=False):
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "healthy"
+    assert response.json()["redis"] == "degraded"

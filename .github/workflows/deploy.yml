@@ -1,0 +1,135 @@
+name: Deploy Wishlist to staging, then production
+
+on:
+  workflow_run:
+    workflows: ["API CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  resolve-images:
+    name: Resolve immutable images from successful CI
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-24.04
+    outputs:
+      api_image: ${{ steps.images.outputs.api_image }}
+      ui_image: ${{ steps.images.outputs.ui_image }}
+    steps:
+      - name: Pull this commit's API image and snapshot the UI digest
+        id: images
+        env:
+          API_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          api_image="ghcr.io/sarccasm/wishlist-api:sha-${API_SHA:0:7}"
+          ui_tag="ghcr.io/sarccasm/wishlist-ui:main"
+          docker pull "$api_image"
+          docker pull "$ui_tag"
+          ui_image="$(docker image inspect "$ui_tag" --format '{{index .RepoDigests 0}}')"
+          test -n "$ui_image"
+          echo "api_image=$api_image" >> "$GITHUB_OUTPUT"
+          echo "ui_image=$ui_image" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Immutable deployment inputs"
+            echo
+            echo "- API: `$api_image`"
+            echo "- UI digest: `$ui_image`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-staging:
+    name: Migrate and deploy staging
+    needs: resolve-images
+    if: needs.resolve-images.result == 'success'
+    runs-on: ubuntu-24.04
+    environment: staging
+    env:
+      API_IMAGE: ${{ needs.resolve-images.outputs.api_image }}
+      UI_IMAGE: ${{ needs.resolve-images.outputs.ui_image }}
+      MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
+      API_DEPLOY_HOOK: ${{ secrets.API_DEPLOY_HOOK }}
+      UI_DEPLOY_HOOK: ${{ secrets.UI_DEPLOY_HOOK }}
+      API_BASE_URL: ${{ vars.API_BASE_URL }}
+      UI_BASE_URL: ${{ vars.UI_BASE_URL }}
+    steps:
+      - name: Apply staging migrations before deployment
+        run: |
+          set -euo pipefail
+          test -n "$MIGRATION_DATABASE_URL" || { echo "Set the staging MIGRATION_DATABASE_URL environment secret."; exit 1; }
+          docker pull "$API_IMAGE"
+          docker run --rm -e MIGRATION_DATABASE_URL -e ENVIRONMENT=staging "$API_IMAGE" python -m alembic upgrade head
+
+      - name: Deploy the resolved images to Render staging
+        run: |
+          set -euo pipefail
+          test -n "$API_DEPLOY_HOOK" && test -n "$UI_DEPLOY_HOOK"
+          curl --fail --silent --show-error --get "$API_DEPLOY_HOOK" --data-urlencode "imgURL=$API_IMAGE"
+          curl --fail --silent --show-error --get "$UI_DEPLOY_HOOK" --data-urlencode "imgURL=$UI_IMAGE"
+
+      - name: Wait for staging and run smoke checks
+        run: |
+          set -euo pipefail
+          test -n "$API_BASE_URL" && test -n "$UI_BASE_URL"
+          healthy=0
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error --connect-timeout 5 "$API_BASE_URL/health" >/dev/null; then
+              healthy=1
+              break
+            fi
+            sleep 10
+          done
+          test "$healthy" -eq 1
+          curl --fail --silent --show-error "$UI_BASE_URL/" >/dev/null
+          curl --fail --silent --show-error "$UI_BASE_URL/wishlists/1" >/dev/null
+          curl --fail --silent --show-error "$API_BASE_URL/wishlists" >/dev/null
+          echo "Staging API health, API endpoint, UI root, and UI history route passed."
+
+  deploy-production:
+    name: Await approval, migrate, and deploy production
+    needs: [resolve-images, deploy-staging]
+    if: needs.deploy-staging.result == 'success'
+    runs-on: ubuntu-24.04
+    environment: production
+    env:
+      API_IMAGE: ${{ needs.resolve-images.outputs.api_image }}
+      UI_IMAGE: ${{ needs.resolve-images.outputs.ui_image }}
+      MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
+      API_DEPLOY_HOOK: ${{ secrets.API_DEPLOY_HOOK }}
+      UI_DEPLOY_HOOK: ${{ secrets.UI_DEPLOY_HOOK }}
+      API_BASE_URL: ${{ vars.API_BASE_URL }}
+      UI_BASE_URL: ${{ vars.UI_BASE_URL }}
+    steps:
+      - name: Apply production migrations before deployment
+        run: |
+          set -euo pipefail
+          test -n "$MIGRATION_DATABASE_URL" || { echo "Set the production MIGRATION_DATABASE_URL environment secret."; exit 1; }
+          docker pull "$API_IMAGE"
+          docker run --rm -e MIGRATION_DATABASE_URL -e ENVIRONMENT=production "$API_IMAGE" python -m alembic upgrade head
+
+      - name: Deploy the exact staging image references to production
+        run: |
+          set -euo pipefail
+          test -n "$API_DEPLOY_HOOK" && test -n "$UI_DEPLOY_HOOK"
+          curl --fail --silent --show-error --get "$API_DEPLOY_HOOK" --data-urlencode "imgURL=$API_IMAGE"
+          curl --fail --silent --show-error --get "$UI_DEPLOY_HOOK" --data-urlencode "imgURL=$UI_IMAGE"
+
+      - name: Wait for production and run smoke checks
+        run: |
+          set -euo pipefail
+          test -n "$API_BASE_URL" && test -n "$UI_BASE_URL"
+          healthy=0
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error --connect-timeout 5 "$API_BASE_URL/health" >/dev/null; then
+              healthy=1
+              break
+            fi
+            sleep 10
+          done
+          test "$healthy" -eq 1
+          curl --fail --silent --show-error "$UI_BASE_URL/" >/dev/null
+          curl --fail --silent --show-error "$UI_BASE_URL/wishlists/1" >/dev/null
+          curl --fail --silent --show-error "$API_BASE_URL/wishlists" >/dev/null
+          echo "Production API health, API endpoint, UI root, and UI history route passed."
