@@ -134,10 +134,18 @@ environment. Maximum application connections are:
 1 worker × 2 pooled connections × 1 instance = 2 connections per environment
 ```
 
-Migration uses one separate NullPool connection while it runs, so allow one temporary
-extra connection during a release. Record the connection limit shown for each Neon
-project/tier and compare it to 2 application connections (3 during migration). Recalculate
-if worker, pool, or instance counts change.
+On 2026-11-18, both Neon projects (`wishlist-staging` and `wishlist-production`) were
+shown on the Free plan. Running `SHOW max_connections;` in each project's default
+`production` branch returned `901`. The staging compute is configured from 0.25 to 2
+CU. Compared with PostgreSQL's reported server cap, the API's maximum of 2 connections
+is 2/901 (about 0.22%) per environment. Migration uses one separate NullPool connection
+while it runs, so plan for 3/901 (about 0.33%) during a release. Recalculate if worker,
+pool, or instance counts change.
+
+`SHOW max_connections` is the server-side PostgreSQL setting; it is not a separate
+PgBouncer client-connection quota. The application uses Neon’s pooled endpoint, while
+migrations use the direct endpoint, so the values above describe the app's configured
+pool budget compared with the server-reported cap.
 
 ## Operational checks and evidence
 
